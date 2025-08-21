@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AquaBot | Smartflood System</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<style>
+:root {
+    --primary-color: #9c1886;
+    --secondary-color: #d5136a;
+    --dark-color: #1e1e2f;
+    --light-color: #ecf0f1;
+    --danger-color: #e74c3c;
+    --warning-color: #f39c12;
+    --black-color: #121212;
+}
+* {margin:0;padding:0;box-sizing:border-box;font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;}
+body {color: var(--light-color); line-height:1.6; background:var(--dark-color);}
+header {background: linear-gradient(90deg, var(--primary-color), var(--secondary-color)); color:white; padding:1rem 0; text-align:center; box-shadow:0 4px 12px rgba(0,0,0,0.3);}
+.container{max-width:1200px;margin:2rem auto;padding:0 1rem;}
+.card{background: #2c2c3e; color:white; border-radius:12px; overflow:hidden; margin-bottom:2rem; box-shadow: 0 5px 15px rgba(0,0,0,0.4);}
+.card-header{background: linear-gradient(90deg, var(--primary-color), var(--secondary-color)); padding:1rem; font-weight:600;}
+.card-body{padding:1.5rem;}
+#map{height:400px;width:100%;border-radius:0 0 12px 12px;}
+.risk-level{display:flex;align-items:center;margin-bottom:1rem;}
+.risk-indicator{width:35px;height:35px;border-radius:50%;margin-right:1rem;}
+.risk-low{background-color:#27ae60;}
+.risk-medium{background-color:#f39c12;}
+.risk-high{background-color:#e74c3c;}
+.chat-container{display:flex;flex-direction:column;height:400px;}
+.chat-messages{flex-grow:1;overflow-y:auto;padding:1rem;background-color:#1b1b2b;border-radius:8px;margin-bottom:1rem;}
+.message{margin-bottom:0.8rem;padding:0.8rem 1.2rem;border-radius:20px;max-width:85%;word-wrap:break-word;line-height:1.5;}
+.bot-message{background-color:#34495e;color:#ecf0f1;border-radius:20px 20px 20px 5px;align-self:flex-start;}
+.user-message{background-color: var(--primary-color);color:white;border-radius:20px 20px 5px 20px;align-self:flex-end;}
+.chat-input-container{display:flex;gap:0.5rem;}
+#chat-input{flex-grow:1;padding:0.8rem 1rem;border-radius:25px;border:1px solid #555;background:#2c2c3e;color:white;outline:none;}
+#send-btn{padding:0 1.5rem;border-radius:25px;background:var(--danger-color);color:black;border:none;cursor:pointer;font-weight:600;}
+#send-btn:hover{background:#c0392b;}
+footer{text-align:center;padding:1.5rem 0;background-color:#1b1b2b;color:white;}
+</style>
+</head>
+<body>
+<header>
+    <h1>AquaBot</h1>
+    <p class="tagline">Smartflood, Advanced AI Urban Water Logging Prevention</p>
+</header>
+
+<div class="container">
+    <div class="card">
+        <div class="card-header">Flood Risk Heatmap & Location</div>
+        <div class="card-body">
+            <p id="risk-text">Detecting your location and flood risk...</p>
+            <div class="risk-level">
+                <div class="risk-indicator risk-low" id="risk-indicator"></div>
+                <span id="risk-desc">Low risk</span>
+            </div>
+            <div id="map"></div>
+            <button id="refresh-btn" style="margin-top:1rem;padding:0.5rem 1rem;border-radius:8px;border:none;background:var(--primary-color);color:white;cursor:pointer;">Refresh Location & Risk</button>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">AquaBot AI Assistant</div>
+        <div class="card-body">
+            <div class="chat-container">
+                <div class="chat-messages" id="chat-messages">
+                    <div class="message bot-message">Hello! I'm AquaBot Pro, your AI assistant for flood prevention. Ask me anything about local flood risks or water management!</div>
+                </div>
+                <div class="chat-input-container">
+                    <input type="text" id="chat-input" placeholder="Ask about flood prediction or prevention...">
+                    <button id="send-btn">Send</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<footer>
+    <p>© 2025 AquaBot - Smartflood AI System</p>
+</footer>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/pyodide/v0.23.4/full/pyodide.js"></script>
+<script>
+// Map (Assassin’s Creed IV dark style)
+let map = L.map('map').setView([20,0],2);
+L.tileLayer('https://cartodb-basemaps-a.global.ssl.fastly.net/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; OpenStreetMap &copy; CARTO',
+    subdomains: 'abcd',
+    maxZoom: 20
+}).addTo(map);
+
+let userMarker, riskCircle;
+
+// Get risk level based on rainfall (simple thresholds)
+function calculateRisk(rain) {
+    if (rain > 20) return {level:"High", color:"red", radius:1500};
+    if (rain > 5) return {level:"Medium", color:"orange", radius:1000};
+    return {level:"Low", color:"green", radius:500};
+}
+
+// Location & Weather-based Risk
+async function detectLocation() {
+    if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(async pos=>{
+            let lat=pos.coords.latitude, lon=pos.coords.longitude;
+            document.getElementById('risk-text').textContent = `Location detected: (${lat.toFixed(3)},${lon.toFixed(3)})`;
+            map.setView([lat,lon],14);
+
+            if(userMarker) map.removeLayer(userMarker);
+            if(riskCircle) map.removeLayer(riskCircle);
+
+            userMarker = L.marker([lat,lon]).addTo(map).bindPopup('Your Location').openPopup();
+
+            // Fetch weather data
+            let apiKey = "YOUR_API_KEY_HERE"; // <-- Replace with your OpenWeatherMap key
+            let url = `https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&units=metric&appid=${apiKey}`;
+            let res = await fetch(url);
+            let data = await res.json();
+
+            let rain = data.rain && data.rain["1h"] ? data.rain["1h"] : 0; // mm in last 1h
+            let risk = calculateRisk(rain);
+
+            // Draw circle
+            riskCircle = L.circle([lat,lon],{radius:risk.radius,color:risk.color,fillColor:risk.color,fillOpacity:0.3}).addTo(map);
+
+            // Update UI
+            document.getElementById('risk-indicator').className = `risk-indicator risk-${risk.level.toLowerCase()}`;
+            document.getElementById('risk-desc').textContent = `${risk.level} risk (${rain}mm rain last hour)`;
+
+        }, err=>{
+            document.getElementById('risk-text').textContent = 'Location unavailable';
+        });
+    } else {
+        document.getElementById('risk-text').textContent = 'Geolocation not supported';
+    }
+}
+
+document.getElementById('refresh-btn').addEventListener('click', detectLocation);
+detectLocation();
+
+// Initialize Pyodide for chatbot
+let pyodideReady = false;
+let pyodide = null;
+async function initPyodide(){
+    pyodide = await loadPyodide();
+    await pyodide.runPythonAsync(`
+import random
+def smart_reply(msg):
+    msg = msg.lower()
+    if 'flood' in msg or 'risk' in msg:
+        return "I’m checking live rainfall and risk levels from OpenWeatherMap for your area."
+    if 'drain' in msg:
+        return "Keep drainage clear. Blocked drains increase flood risk significantly."
+    if 'rain' in msg:
+        return "Heavy rain can cause local flooding. Stay safe and avoid low-lying roads."
+    if 'prevent' in msg:
+        return "Use sandbags, maintain drains, and stay updated with local alerts."
+    if 'map' in msg or 'location' in msg:
+        return "Your live location is shown on the map above with real-time risk."
+    if 'help' in msg:
+        return "Ask me about flood risks, local waterlogging, preventive measures, or drainage advice."
+    return "I'm AquaBot, your smart flood assistant! Ask about local waterlogging or preventive steps."
+`);
+    pyodideReady = true;
+}
+initPyodide();
+
+// Chat logic
+const chatMessages = document.getElementById('chat-messages');
+function appendMessage(text,type){
+    const div=document.createElement('div');
+    div.className=`message ${type}`;
+    div.textContent=text;
+    chatMessages.appendChild(div);
+    chatMessages.scrollTop=chatMessages.scrollHeight;
+}
+async function getBotReply(msg){
+    if(!pyodideReady) return "Loading AI engine... please wait.";
+    let safeMsg = msg.replace(/"/g, '\\"');
+    return await pyodide.runPythonAsync(`smart_reply("${safeMsg}")`);
+}
+document.getElementById('send-btn').addEventListener('click', async ()=>{
+    let input = document.getElementById('chat-input').value;
+    if(!input) return;
+    appendMessage(input,'user-message');
+    document.getElementById('chat-input').value='';
+    let reply = await getBotReply(input);
+    appendMessage(reply,'bot-message');
+});
+document.getElementById('chat-input').addEventListener('keypress', async (e) => {
+    if(e.key === 'Enter') document.getElementById('send-btn').click();
+});
+</script>
+</body>
+</html>
